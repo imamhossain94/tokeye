@@ -1,0 +1,14 @@
+{
+  "name": "tokeye",
+  "private": true,
+  "version": "0.1.0",
+  "description": "A cute, customizable token & cost monitor for AI coding tools",
+  "scripts": {
+    "tauri": "tauri",
+    "build": "tauri build",
+    "icons": "tauri icon src-tauri/icons/icon.png"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2"
+  }
+}

@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Tokeye</title>
+  <link rel="stylesheet" href="css/app.css" />
+</head>
+<body class="dash">
+  <div class="titlebar" data-tauri-drag-region>
+    <div class="t-eyes" id="tEyes"></div>
+    <span class="name" data-tauri-drag-region>Tokeye</span>
+    <span class="live"></span>
+    <div class="sp" data-tauri-drag-region></div>
+    <button class="tb-btn" id="pin" title="Keep open">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 2.5l4 4-2 1-2.5 2.5.5 3-1 1-3-3-3.5 3.5M3.5 9.5l3-3L9 4l-.5-1.5"/></svg>
+    </button>
+    <button class="tb-btn" id="min" title="Hide">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M3.5 8h9"/></svg>
+    </button>
+    <button class="tb-btn close" id="close" title="Close to tray">
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M4 4l8 8M12 4l-8 8"/></svg>
+    </button>
+  </div>
+  <nav class="tabs">
+    <button class="tab active" data-tab="overview">Overview</button>
+    <button class="tab" data-tab="bill">Bill</button>
+    <button class="tab" data-tab="models">Models</button>
+    <button class="tab" data-tab="sessions">Sessions</button>
+    <button class="tab" data-tab="settings">Settings</button>
+  </nav>
+  <main>
+    <!-- overview -->
+    <section class="view active" id="v-overview">
+      <div class="loading" id="loading"><div class="eyes" id="lEyes" style="width:90px;height:46px"></div><span>Reading your AI coding history…</span></div>
+      <div class="banner" id="banner"></div>
+      <div class="card hero" id="hero">
+        <div class="h-main">
+          <div class="lbl">Today</div>
+          <b class="big" id="todayCost">$0.00</b>
+          <div class="h-sub" id="todaySub">—</div>
+          <div class="bar"><i id="todayBar"></i></div>
+        </div>
+        <div class="h-eyes" id="hEyes"></div>
+      </div>
+      <div class="grid2">
+        <div class="card stat"><div class="lbl">Tokens in</div><b id="tin">0</b><div class="s-sub" id="tinSub">—</div></div>
+        <div class="card stat"><div class="lbl">Tokens out</div><b id="tout">0</b><div class="s-sub" id="toutSub">—</div></div>
+        <div class="card stat"><div class="lbl">This month</div><b id="month">$0</b><div class="s-sub" id="monthSub">—</div><div class="bar"><i id="monthBar"></i></div></div>
+        <div class="card stat"><div class="lbl">Current session</div><b id="sess">$0</b><div class="s-sub" id="sessSub">—</div><div class="bar"><i id="sessBar"></i></div></div>
+      </div>
+      <div class="card">
+        <h3>Daily cost <span id="daysSub">last 14 days</span></h3>
+        <svg class="days" id="days" viewBox="0 0 400 110" preserveAspectRatio="none"></svg>
+        <div class="axis" id="daysAxis"></div>
+      </div>
+      <div class="card">
+        <h3>Today by hour <span id="hoursSub"></span></h3>
+        <svg class="hours" id="hours" viewBox="0 0 400 46" preserveAspectRatio="none"></svg>
+        <div class="axis"><span>0h</span><span>6h</span><span>12h</span><span>18h</span><span>23h</span></div>
+      </div>
+      <div class="card">
+        <h3>By tool <span>this month</span></h3>
+        <div class="chips" id="tools"></div>
+      </div>
+      <div class="card">
+        <h3>Billed to <span>this month</span></h3>
+        <div class="chips" id="providers"></div>
+      </div>
+      <div class="foot"><span id="foot">—</span><span id="rate"></span></div>
+    </section>
+
+    <!-- bill -->
+    <section class="view" id="v-bill">
+      <div class="card bill-filters">
+        <div class="seg wrap" id="billPeriod">
+          <button data-p="today">Today</button><button data-p="yesterday">Yesterday</button><button data-p="7d">7 days</button><button data-p="month">This month</button><button data-p="last_month">Last month</button><button data-p="30d">30 days</button><button data-p="all">All loaded</button><button data-p="custom">Custom</button>
+        </div>
+        <div class="bill-custom" id="billCustom" hidden>
+          <input type="date" class="field" id="billFrom" /><span>to</span><input type="date" class="field" id="billTo" />
+        </div>
+        <div class="bill-grid">
+          <label>Billed to<select class="field" data-bf="provider"></select></label>
+          <label>Tool<select class="field" data-bf="tool"></select></label>
+          <label>Project<select class="field" data-bf="project"></select></label>
+          <label>Model<select class="field" data-bf="model"></select></label>
+          <label class="wide">Session<select class="field" data-bf="session"></select></label>
+        </div>
+        <div class="bill-opts"><label class="chk"><input type="checkbox" id="billHidden" /> Include hidden sessions</label><a id="billReset">Clear filters</a></div>
+      </div>
+      <div class="card hero bill-total">
+        <div class="h-main">
+          <div class="lbl" id="billTitle">This month</div>
+          <b class="big" id="billCost">$0.00</b>
+          <div class="h-sub" id="billSub">—</div>
+        </div>
+        <button class="btn" id="billExport" title="Save line items as CSV in Downloads">Export CSV</button>
+      </div>
+      <div class="chips" id="billChips"></div>
+      <div class="card">
+        <h3>Daily cost <span id="billDaysSub"></span></h3>
+        <svg class="days" id="billDays" viewBox="0 0 400 110" preserveAspectRatio="none"></svg>
+        <div class="axis" id="billAxis"></div>
+      </div>
+      <div class="card">
+        <div class="seg wrap" id="billGroup">
+          <button data-g="project">Project</button><button data-g="session">Session</button><button data-g="provider">Billed to</button><button data-g="tool">Tool</button><button data-g="model">Model</button><button data-g="day">Day</button>
+        </div>
+        <div id="billRows"></div>
+      </div>
+      <div class="foot" id="billFoot"></div>
+    </section>
+
+    <!-- models -->
+    <section class="view" id="v-models">
+      <div class="card">
+        <h3>Today</h3>
+        <table id="mToday"></table>
+      </div>
+      <div class="card">
+        <h3>This month</h3>
+        <table id="mMonth"></table>
+      </div>
+    </section>
+
+    <!-- sessions -->
+    <section class="view" id="v-sessions">
+      <div class="card" id="sessList"></div>
+    </section>
+
+    <!-- settings -->
+    <section class="view" id="v-settings">
+      <div class="card set-group">
+        <h3>Limits &amp; warnings</h3>
+        <div class="row"><div class="r-l">Daily limit<small>0 turns it off</small></div><input class="field" type="number" min="0" step="1" data-k="daily_limit" /></div>
+        <div class="row"><div class="r-l">Monthly limit</div><input class="field" type="number" min="0" step="10" data-k="monthly_limit" /></div>
+        <div class="row"><div class="r-l">Session limit<small>The session you're working in now</small></div><input class="field" type="number" min="0" step="1" data-k="session_limit" /></div>
+        <div class="row"><div class="r-l">Warn at<small>Percent of a limit</small></div><input class="field" type="number" min="10" max="100" step="5" data-k="warn_percent" /></div>
+        <div class="row"><div class="r-l">Desktop notifications</div><label class="switch"><input type="checkbox" data-k="notify" /><span></span></label></div>
+      </div>
+
+      <div class="card set-group">
+        <h3>Surfaces</h3>
+        <div class="seg" id="surfTabs">
+          <button data-s="notch">Notch</button><button data-s="floating">Bubble</button><button data-s="widget">Widget</button><button data-s="taskbar">Taskbar</button>
+        </div>
+        <div class="row"><div class="r-l" id="sfName">Show</div><label class="switch"><input type="checkbox" id="sfShow" /><span></span></label></div>
+        <div class="row"><div class="r-l">Size</div><input class="field" type="range" min="0.6" max="2" step="0.05" data-sf="scale" style="width:150px" /></div>
+        <div class="row"><div class="r-l">Opacity</div><input class="field" type="range" min="0.3" max="1" step="0.05" data-sf="opacity" style="width:150px" /></div>
+        <div class="row"><div class="r-l">Style</div><select class="field" data-sf="style"><option value="solid">Solid</option><option value="glass">Glass</option><option value="outline">Outline</option><option value="minimal">Minimal</option></select></div>
+        <div class="row"><div class="r-l">Corner radius<small id="sfRadiusVal">8 px</small></div><input class="field" type="range" min="0" max="30" step="1" data-sf="radius" style="width:150px" /></div>
+        <div class="row"><div class="r-l">Main number</div><select class="field" data-sf="metric"><option value="today">Today's cost</option><option value="month">This month</option><option value="session">Current session</option><option value="rate">Last hour</option><option value="tokens_in">Tokens in today</option><option value="tokens_out">Tokens out today</option><option value="requests">Requests today</option></select></div>
+        <div class="row" style="flex-direction:column;align-items:stretch"><div class="r-l">Also show</div><div class="chipset" id="sfFields"></div></div>
+        <div class="row sf-notch"><div class="r-l">Position</div><select class="field" data-sf="anchor"><option value="left">Top left</option><option value="center">Top center</option><option value="right">Top right</option></select></div>
+        <div class="row sf-notch"><div class="r-l">Expand on hover</div><label class="switch"><input type="checkbox" data-sf="expand" /><span></span></label></div>
+        <div class="row sf-float"><div class="r-l">Stay on top<small>Off: sits behind your windows</small></div><label class="switch"><input type="checkbox" data-sf="on_top" /><span></span></label></div>
+        <div class="row sf-float"><div class="r-l">Click-through<small>Clicks pass through it. Turn off from the tray menu.</small></div><label class="switch"><input type="checkbox" data-sf="ghost" /><span></span></label></div>
+        <div class="row sf-widget"><div class="r-l">Chart range</div><select class="field" data-sf="chart_days"><option value="7">7 days</option><option value="14">14 days</option><option value="30">30 days</option></select></div>
+        <div class="row"><div class="r-l">Positions</div><button class="btn" id="resetPos">Reset positions</button></div>
+      </div>
+
+      <div class="card set-group">
+        <h3>Companion</h3>
+        <div class="row"><div class="r-l">Show the eyes</div><label class="switch"><input type="checkbox" data-k="companion" /><span></span></label></div>
+        <div class="row"><div class="r-l">Eye shape</div><select class="field" data-k="eye_shape"><option value="rounded">Rounded</option><option value="round">Round</option><option value="tall">Tall</option><option value="wide">Wide</option><option value="square">Square</option><option value="dot">Dots</option></select></div>
+        <div class="row"><div class="r-l">Personality</div><select class="field" data-k="personality"><option value="calm">Calm</option><option value="normal">Normal</option><option value="playful">Playful</option></select></div>
+        <div class="row"><div class="r-l">Follow my cursor</div><label class="switch"><input type="checkbox" data-k="follow_cursor" /><span></span></label></div>
+        <div class="row"><div class="r-l">Eye color</div><div class="swatches" id="eyeColors"></div></div>
+      </div>
+
+      <div class="card set-group">
+        <h3>Look</h3>
+        <div class="row"><div class="r-l">Theme</div><select class="field" data-k="theme"><option value="system">System</option><option value="dark">Dark</option><option value="light">Light</option></select></div>
+        <div class="row"><div class="r-l">Accent</div><div class="swatches" id="accents"></div></div>
+        <div class="row"><div class="r-l">All surfaces opacity</div><input class="field" type="range" min="0.4" max="1" step="0.05" data-k="opacity" style="width:150px" /></div>
+      </div>
+
+      <div class="card set-group">
+        <h3>Sources <span>tools Tokeye reads</span></h3>
+        <div id="sources"></div>
+        <div class="row" style="flex-direction:column;align-items:stretch">
+          <div class="r-l">Custom folders<small>Leave empty for the default location</small></div>
+          <div class="paths">
+            <label>Claude<input class="field" type="text" data-k="claude_dir" placeholder="~/.claude" /></label>
+            <label>Codex<input class="field" type="text" data-path="codex" placeholder="~/.codex/sessions" /></label>
+            <label>OpenCode<input class="field" type="text" data-path="opencode" placeholder="~/.local/share/opencode" /></label>
+            <label>Gemini<input class="field" type="text" data-path="gemini" placeholder="~/.gemini/tmp" /></label>
+            <label>Cursor CSV<input class="field" type="text" data-path="cursor" placeholder="~/Tokeye/imports" /></label>
+          </div>
+        </div>
+      </div>
+
+      <div class="card set-group">
+        <h3>Costs</h3>
+        <div class="row"><div class="r-l">Count usage from<small>Limits use this total</small></div><select class="field" data-k="providers" id="provSelect"><option value="all">Everything</option></select></div>
+        <div class="row"><div class="r-l">Use costs reported by tools<small>OpenCode, Cline and Cursor report their own costs</small></div><label class="switch"><input type="checkbox" data-k="trust_tool_costs" /><span></span></label></div>
+        <div class="row"><div class="r-l">Currency symbol</div><input class="field" type="text" maxlength="3" data-k="currency" /></div>
+        <div class="row"><div class="r-l">Web search, per request</div><input class="field" type="number" min="0" step="0.001" data-k="web_search_price" /></div>
+        <div class="row" style="flex-direction:column;align-items:stretch"><div class="r-l">Prices per 1M tokens<small>First matching pattern wins. Edit to match your bill.</small></div><textarea class="field" id="prices" spellcheck="false"></textarea></div>
+      </div>
+
+      <div class="card set-group">
+        <h3>System</h3>
+        <div class="row"><div class="r-l">Code editor<small>Clicking a session opens its project here</small></div>
+          <select class="field" id="editorPreset">
+            <option value="code">VS Code</option><option value="cursor">Cursor</option><option value="windsurf">Windsurf</option><option value="code-insiders">VS Code Insiders</option><option value="zed">Zed</option><option value="subl">Sublime Text</option><option value="idea">IntelliJ / JetBrains</option><option value="files">File manager</option><option value="custom">Custom…</option>
+          </select></div>
+        <div class="row" id="editorCustomRow" hidden><div class="r-l">Custom command<small>Use {path} for the folder, e.g. "C:\Tools\editor.exe" {path}</small></div><input class="field" type="text" id="editorCustom" style="width:200px;text-align:left" /></div>
+        <div class="row"><div class="r-l" id="autoLabel">Start with Windows</div><label class="switch"><input type="checkbox" data-k="autostart" /><span></span></label></div>
+        <div class="row"><div class="r-l">Refresh every (ms)</div><input class="field" type="number" min="500" step="500" data-k="poll_ms" /></div>
+        <div class="row"><div class="r-l">History to load (days)</div><input class="field" type="number" min="2" step="1" data-k="history_days" /></div>
+        <div class="row"><div class="r-l">Tokeye</div><button class="btn danger" id="quit">Quit</button></div>
+      </div>
+    </section>
+  </main>
+  <script type="module" src="js/dashboard.js"></script>
+</body>
+</html>

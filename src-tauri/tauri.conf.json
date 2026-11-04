@@ -1,0 +1,49 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Tokeye",
+  "version": "0.1.0",
+  "identifier": "app.tokeye.monitor",
+  "build": {
+    "frontendDist": "../ui"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "macOSPrivateApi": true,
+    "windows": [],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "publisher": "Imam Hossain",
+    "copyright": "© 2026 Imam Hossain",
+    "homepage": "https://github.com/imamhossain94/tokeye",
+    "category": "DeveloperTool",
+    "shortDescription": "Token & cost monitor for AI coding tools",
+    "longDescription": "Tokeye watches the token use and cost of Claude Code, Codex CLI, OpenCode, Gemini CLI, Cline, Roo Code, Kilo Code and Cursor, and shows it in your tray, a notch island, a floating bubble, a desktop widget or a taskbar strip, with a two-eyed companion that reacts to your spending.",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico",
+      "icons/icon.png"
+    ],
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser",
+        "displayLanguageSelector": false
+      }
+    },
+    "linux": {
+      "deb": {
+        "section": "devel"
+      }
+    },
+    "macOS": {
+      "minimumSystemVersion": "10.15"
+    }
+  }
+}

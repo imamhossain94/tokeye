@@ -1,0 +1,76 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows
+            platform: windows-latest
+            args: ""
+          - name: Linux
+            platform: ubuntu-22.04
+            args: ""
+          - name: macOS (Apple Silicon + Intel)
+            platform: macos-latest
+            args: "--target universal-apple-darwin"
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux build dependencies
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - run: npm ci
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: v__VERSION__
+          releaseName: Tokeye v__VERSION__
+          releaseDraft: false
+          prerelease: false
+          args: ${{ matrix.args }}
+          releaseBody: |
+            ## Download
+
+            | Platform | File |
+            |---|---|
+            | **Windows 10/11** | `Tokeye_*_x64-setup.exe` (installer) or `Tokeye_*_x64_en-US.msi` |
+            | **Ubuntu / Debian** | `Tokeye_*_amd64.deb` → `sudo apt install ./Tokeye_*_amd64.deb` |
+            | **Any Linux** | `Tokeye_*_amd64.AppImage` → `chmod +x` and run |
+            | **Fedora / RHEL** | `Tokeye-*.x86_64.rpm` |
+            | **macOS** (Apple Silicon + Intel) | `Tokeye_*_universal.dmg` |
+
+            The builds aren't code-signed yet:
+            - **Windows:** if SmartScreen appears, click **More info → Run anyway**.
+            - **macOS:** right-click the app → **Open** the first time, or run `xattr -dr com.apple.quarantine /Applications/Tokeye.app`.
+
+            See the [README](https://github.com/imamhossain94/tokeye#readme) for features and setup.

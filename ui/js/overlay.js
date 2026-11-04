@@ -3,6 +3,7 @@ import { Eyes } from './eyes.js';
 
 const w = win();
 const mode = w.label; // notch | floating | widget | taskbar
+const isLinux = /Linux/.test(navigator.userAgent);
 document.body.dataset.mode = mode;
 const D = 'data-tauri-drag-region';
 
@@ -64,6 +65,10 @@ function applySurface() {
   root.style.opacity = cfg.opacity * ((state.settings && state.settings.opacity) ?? 1);
   root.className = 'style-' + cfg.style;
   document.querySelectorAll('[data-f]').forEach(el => (el.hidden = !cfg.fields.includes(el.dataset.f)));
+  // Changing the surface settings resizes the native notch window; keep it in
+  // sync with whether the pill is currently expanded.
+  const pill = $('#pill');
+  if (isLinux && mode === 'notch' && pill) invoke('set_notch_open', { open: pill.classList.contains('open') });
 }
 
 const listFields = () => cfg.fields.filter(f => FIELDS[f]);
@@ -115,13 +120,37 @@ boot({
 // Every surface: right-click opens the custom menu, double-click opens the dashboard.
 document.addEventListener('contextmenu', e => {
   e.preventDefault();
-  invoke('open_menu_cmd');
+  if (isLinux && mode === 'notch') {
+    // Anchor the menu just below the pill instead of on top of it, so the menu
+    // doesn't cover the notch (and the pointer doesn't immediately leave it).
+    const r = $('#pill').getBoundingClientRect();
+    const d = window.devicePixelRatio || 1;
+    w.innerPosition()
+      .then(pos => invoke('open_menu_cmd', {
+        x: pos.x + (r.left + r.width / 2) * d,
+        y: pos.y + (r.bottom + 6) * d,
+      }))
+      .catch(() => invoke('open_menu_cmd', { x: null, y: null }));
+  } else {
+    invoke('open_menu_cmd', { x: null, y: null });
+  }
 });
 document.addEventListener('dblclick', e => {
   if (!e.target.closest('.eyes')) invoke('show_dashboard_cmd', { tab: null });
 });
 
 // Alerts: the companion panics and the notch shows a red banner.
+let hovering = false;
+let notchOpen = () => {};
+let ignoring = true;
+function setClickThrough(ignore) {
+  // The Linux notch window is pill-sized and must always accept input.
+  if (isLinux && mode === 'notch') return;
+  if (ignore === ignoring) return;
+  ignoring = ignore;
+  invoke('set_click_through', { ignore });
+}
+
 listen('alert', e => {
   const a = e.payload;
   eyes.react(a.level >= 2 ? 'shocked' : 'worried', 2500);
@@ -129,56 +158,76 @@ listen('alert', e => {
   const pill = $('#pill');
   if (pill) {
     $('#alert').textContent = `${a.title} — ${a.body}`;
-    pill.classList.add('alerting', 'open');
+    pill.classList.add('alerting');
+    notchOpen(true);
     setClickThrough(false);
     clearTimeout(window._alertT);
     window._alertT = setTimeout(() => {
       pill.classList.remove('alerting');
-      if (!hovering) pill.classList.remove('open');
+      if (!hovering) notchOpen(false);
       setClickThrough(!hovering);
     }, 7000);
   }
 });
 
-// ---- notch: click-through except over the pill, expand on hover ----
-let hovering = false;
-let ignoring = true;
-function setClickThrough(ignore) {
-  if (ignore === ignoring) return;
-  ignoring = ignore;
-  invoke('set_click_through', { ignore });
-}
+// ---- notch: expand on hover ----
 if (mode === 'notch') {
   const pill = $('#pill');
-  let pos = { x: 0, y: 0 };
-  const refresh = () => w.innerPosition().then(p => (pos = p)).catch(() => {});
-  refresh();
-  setInterval(refresh, 3000);
   let leaveT = null;
-  listen('pointer', e => {
-    const [x, y] = e.payload;
-    const r = pill.getBoundingClientRect();
-    // getBoundingClientRect already includes CSS zoom; convert CSS px to physical px.
-    const d = window.devicePixelRatio || 1;
-    const pad = 4 * d;
-    const L = pos.x + r.left * d, R = pos.x + r.right * d, T = pos.y + r.top * d, B = pos.y + r.bottom * d;
-    const inside = x >= L - pad && x <= R + pad && y >= T - pad && y <= B + pad;
-    if (inside && !hovering) {
+
+  notchOpen = open => {
+    if (isLinux) invoke('set_notch_open', { open });
+    pill.classList.toggle('open', open);
+  };
+
+  pill.addEventListener('click', e => {
+    if (!e.target.closest('.eyes')) invoke('show_dashboard_cmd', { tab: null });
+  });
+
+  if (isLinux) {
+    // The native input region is limited to the pill, so these are real pointer
+    // events (the global cursor poll can't see the cursor under Wayland).
+    pill.addEventListener('pointerenter', () => {
       hovering = true;
       clearTimeout(leaveT);
-      if (cfg.expand) pill.classList.add('open');
-      setClickThrough(false);
-    } else if (!inside && hovering) {
+      if (cfg.expand) notchOpen(true);
+    });
+    pill.addEventListener('pointerleave', () => {
       hovering = false;
       clearTimeout(leaveT);
       leaveT = setTimeout(() => {
         if (hovering || pill.classList.contains('alerting')) return;
-        pill.classList.remove('open');
-        setClickThrough(true);
-      }, 280);
-    }
-  });
-  pill.addEventListener('click', e => {
-    if (!e.target.closest('.eyes')) invoke('show_dashboard_cmd', { tab: null });
-  });
+        notchOpen(false);
+      }, 220);
+    });
+  } else {
+    let pos = { x: 0, y: 0 };
+    const refresh = () => w.innerPosition().then(p => (pos = p)).catch(() => {});
+    refresh();
+    setInterval(refresh, 3000);
+    let leaveT = null;
+    listen('pointer', e => {
+      const [x, y] = e.payload;
+      const r = pill.getBoundingClientRect();
+      // getBoundingClientRect already includes CSS zoom; convert CSS px to physical px.
+      const d = window.devicePixelRatio || 1;
+      const pad = 4 * d;
+      const L = pos.x + r.left * d, R = pos.x + r.right * d, T = pos.y + r.top * d, B = pos.y + r.bottom * d;
+      const inside = x >= L - pad && x <= R + pad && y >= T - pad && y <= B + pad;
+      if (inside && !hovering) {
+        hovering = true;
+        clearTimeout(leaveT);
+        if (cfg.expand) pill.classList.add('open');
+        setClickThrough(false);
+      } else if (!inside && hovering) {
+        hovering = false;
+        clearTimeout(leaveT);
+        leaveT = setTimeout(() => {
+          if (hovering || pill.classList.contains('alerting')) return;
+          pill.classList.remove('open');
+          setClickThrough(true);
+        }, 280);
+      }
+    });
+  }
 }

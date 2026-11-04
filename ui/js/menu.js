@@ -4,11 +4,32 @@ import { Eyes } from './eyes.js';
 const eyes = new Eyes($('#eyes'));
 const feed = moodFeeder(eyes);
 
+let lastH = 0;
+let fitTimer = 0;
+function fit() {
+  // While the window is hidden its viewport can be tiny, which makes every
+  // label wrap and reports a bogus height. Wait until it has a real width.
+  if (document.hidden || document.documentElement.clientWidth < 200) return;
+  const box = $('#box');
+  const first = box.getBoundingClientRect();
+  const last = box.lastElementChild;
+  if (!last) return;
+  const h = Math.ceil(last.getBoundingClientRect().bottom - first.top + 16);
+  if (h === lastH) return;
+  lastH = h;
+  invoke('resize_self', { width: 280, height: h });
+}
+function fitSoon() {
+  clearTimeout(fitTimer);
+  fitTimer = setTimeout(fit, 80);
+}
+
 function render(st) {
   if (!st || !st.ready) return;
   $('#today').textContent = money(st.today.cost);
   $('#sub').textContent = `today · ${tok(inTok(st.today))} in · ${tok(st.today.output)} out · month ${money(st.month.cost)}`;
   feed(st);
+  fitSoon();
 }
 
 function fill(s) {
@@ -41,14 +62,13 @@ document.addEventListener('contextmenu', e => e.preventDefault());
 listen('menu-open', () => {
   eyes.react('happy', 900);
   eyes.hop();
+  fitSoon();
 });
 
 invoke('platform').then(os => {
   $('#autoLabel').textContent = os === 'windows' ? 'Start with Windows' : 'Start at login';
 });
 
-boot({ onStats: render, onSettings: fill }).then(() => {
-  // Fit the window to the menu's content.
-  const h = Math.ceil($('#box').getBoundingClientRect().height + 16);
-  invoke('resize_self', { width: 280, height: h });
-});
+window.addEventListener('resize', fitSoon);
+document.addEventListener('visibilitychange', () => !document.hidden && fitSoon());
+boot({ onStats: render, onSettings: fill }).then(fitSoon);

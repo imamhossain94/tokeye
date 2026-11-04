@@ -19,6 +19,10 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "std"
 walkdir = "2"
 rusqlite = { version = "0.32", features = ["bundled"] }
 
+[target.'cfg(target_os = "linux")'.dependencies]
+gtk = "0.18"
+cairo-rs = "0.18"
+
 [profile.release]
 strip = true
 codegen-units = 16

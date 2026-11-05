@@ -37,7 +37,7 @@ struct AppState {
     flyout: AtomicBool,
     dirty: AtomicBool,
     save_pending: AtomicBool,
-    notch_open: AtomicBool,
+    dragging: AtomicBool,
 }
 
 fn st(app: &AppHandle) -> &AppState {
@@ -99,6 +99,11 @@ mod win32 {
     #[link(name = "user32")]
     extern "system" {
         fn SetWindowPos(hwnd: isize, after: isize, x: i32, y: i32, cx: i32, cy: i32, flags: u32) -> i32;
+        fn GetAsyncKeyState(key: i32) -> i16;
+    }
+    /// Whether a mouse button is held (physical buttons, so swapped buttons work too).
+    pub fn mouse_down() -> bool {
+        unsafe { GetAsyncKeyState(0x01) < 0 || GetAsyncKeyState(0x02) < 0 }
     }
     pub fn raise_topmost(hwnd: isize) {
         // HWND_TOPMOST; SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE | SWP_NOOWNERZORDER
@@ -199,7 +204,8 @@ fn toggle_dashboard(app: &AppHandle, pos: PhysicalPosition<f64>) {
     }
 }
 
-fn open_menu(app: &AppHandle, anchor: Option<PhysicalPosition<f64>>) {
+/// Opens the custom menu. `from` is the surface it was opened from (it can then change what that surface shows).
+fn open_menu(app: &AppHandle, anchor: Option<PhysicalPosition<f64>>, from: Option<&str>) {
     let Some(w) = app.get_webview_window("menu") else { return };
     if w.is_visible().unwrap_or(false) {
         hide(app, "menu");
@@ -211,7 +217,7 @@ fn open_menu(app: &AppHandle, anchor: Option<PhysicalPosition<f64>>) {
     if let Some(c) = anchor.or_else(|| app.cursor_position().ok()) {
         place(app, &w, c, Placement::Menu);
     }
-    let _ = app.emit_to("menu", "menu-open", ());
+    let _ = app.emit_to("menu", "menu-open", from);
     let _ = w.show();
     let _ = w.set_focus();
     // On Linux the first focus request races the window's first draw (tao only
@@ -263,7 +269,9 @@ fn create_menu(app: &AppHandle) -> tauri::Result<()> {
         .inner_size(280.0, 452.0)
         .decorations(false)
         .shadow(true)
-        .resizable(true)
+        // GTK won't programmatically resize a fixed-size window (the menu fits itself to
+        // its content); on Windows and macOS a resizable window would get resize borders.
+        .resizable(cfg!(target_os = "linux"))
         .maximizable(false)
         .minimizable(false)
         .skip_taskbar(true)
@@ -307,26 +315,36 @@ fn scaled_size(label: &str, cfg: &Surface) -> (f64, f64) {
     (w * k, h * k)
 }
 
-/// Restricts the notch window's input to the pill only. The window stays large
-/// enough for the expanded panel and its shadow, but the transparent area lets
-/// clicks through. A non-empty input region also gives XWayland real pointer
-/// events over the pill, which the global cursor poll can't provide on Wayland.
-#[cfg(target_os = "linux")]
-fn set_notch_region(w: &WebviewWindow, cfg: &Surface, open: bool) -> tauri::Result<()> {
-    use gtk::prelude::*;
-    let win = w.gtk_window()?;
-    let k = cfg.scale.clamp(0.6, 2.0);
-    let (ww, _) = scaled_size("notch", cfg);
-    let (pw, ph) = if open { (440.0, 176.0) } else { (204.0, 36.0) };
-    let (pw, ph) = ((pw * k) as i32, (ph * k) as i32);
-    let x = (ww as i32 - pw) / 2;
-    let region = cairo::Region::create_rectangle(&cairo::RectangleInt::new(x, 0, pw, ph));
-    win.input_shape_combine_region(Some(&region));
-    Ok(())
+/// Linux: limits which parts of a window take mouse input (rects in CSS px: x, y, width,
+/// height). The notch window stays big enough for the open panel and its shadow while the
+/// transparent rest passes clicks through, and XWayland delivers real pointer events
+/// inside the region, which the global cursor poll can't see under Wayland.
+#[allow(unused_variables)]
+fn set_input_region(app: &AppHandle, w: &WebviewWindow, rects: Vec<[f64; 4]>) {
+    #[cfg(target_os = "linux")]
+    {
+        let w = w.clone();
+        // GTK must only be touched from the main thread (this is also called from async commands).
+        let _ = app.run_on_main_thread(move || {
+            use gtk::prelude::*;
+            let Ok(win) = w.gtk_window() else { return };
+            let region = cairo::Region::create();
+            for [x, y, rw, rh] in rects {
+                let r = cairo::RectangleInt::new(x.floor() as i32, y.floor() as i32, rw.ceil().max(1.0) as i32, rh.ceil().max(1.0) as i32);
+                let _ = region.union_rectangle(&r);
+            }
+            win.input_shape_combine_region(Some(&region));
+        });
+    }
 }
 
 fn default_overlay_pos(app: &AppHandle, label: &str, cfg: &Surface) -> Option<(i32, i32)> {
-    let mon = app.primary_monitor().ok().flatten()?;
+    // X11 without a primary output (common under XWayland) reports none; use the first screen then.
+    let mon = app
+        .primary_monitor()
+        .ok()
+        .flatten()
+        .or_else(|| app.available_monitors().ok().and_then(|m| m.into_iter().next()))?;
     let sf = mon.scale_factor();
     let px = |v: f64| (v * sf) as i32;
     let (lw, lh) = scaled_size(label, cfg);
@@ -360,7 +378,7 @@ fn create_overlay(app: &AppHandle, label: &str, s: &Settings) -> tauri::Result<(
         .decorations(false)
         .transparent(true)
         .shadow(false)
-        .resizable(true)
+        .resizable(cfg!(target_os = "linux"))
         .maximizable(false)
         .minimizable(false)
         .skip_taskbar(true)
@@ -370,7 +388,8 @@ fn create_overlay(app: &AppHandle, label: &str, s: &Settings) -> tauri::Result<(
         .always_on_bottom(label == "widget" && !on_top)
         .visible_on_all_workspaces(label == "notch")
         .build()?;
-    let pos = if label == "notch" { None } else { s.positions.get(label).copied() };
+    // The notch sits at its anchor unless it was dragged somewhere.
+    let pos = if label == "notch" && cfg.anchor != "custom" { None } else { s.positions.get(label).copied() };
     if let Some((x, y)) = pos.or_else(|| default_overlay_pos(app, label, &cfg)) {
         let _ = w.set_position(Position::Physical(PhysicalPosition::new(x, y)));
     }
@@ -378,9 +397,10 @@ fn create_overlay(app: &AppHandle, label: &str, s: &Settings) -> tauri::Result<(
     // Click-through must be set after the window is realized. On Linux tao's
     // `CursorIgnoreEvents` handler unwraps the GDK window, which is still `None`
     // before `show()`, so doing this first aborts the whole app on startup.
-    #[cfg(target_os = "linux")]
-    if label == "notch" {
-        let _ = set_notch_region(&w, &cfg, false);
+    // Until the page reports its own shape, only the closed pill takes input.
+    if cfg!(target_os = "linux") && label == "notch" {
+        let k = cfg.scale.clamp(0.6, 2.0);
+        set_input_region(app, &w, vec![[(lw - 204.0 * k) / 2.0, 0.0, 204.0 * k, 36.0 * k]]);
     }
     let notch_click_through = label == "notch" && !cfg!(target_os = "linux");
     if notch_click_through || (cfg.ghost && matches!(label, "floating" | "widget")) {
@@ -425,16 +445,24 @@ fn apply_surfaces(app: &AppHandle, s: &Settings) {
         let Some(w) = app.get_webview_window(label) else { continue };
         let cfg = s.surface(label);
         let (lw, lh) = scaled_size(label, &cfg);
+        let old_size = w.outer_size().ok();
         let _ = w.set_size(Size::Logical(LogicalSize::new(lw, lh)));
         match label {
             "notch" => {
-                if let Some((x, y)) = default_overlay_pos(app, label, &cfg) {
+                if cfg.anchor == "custom" {
+                    // A dragged notch stays put; keep the pill centered on the same spot if it was resized.
+                    if let (Ok(p), Some(old)) = (w.outer_position(), old_size) {
+                        let new_w = (lw * w.scale_factor().unwrap_or(1.0)).round() as i32;
+                        let x = p.x + (old.width as i32 - new_w) / 2;
+                        if x != p.x {
+                            let _ = w.set_position(Position::Physical(PhysicalPosition::new(x, p.y)));
+                            let state = st(app);
+                            state.settings.lock().unwrap().positions.insert("notch".into(), (x, p.y));
+                            state.save_pending.store(true, Ordering::SeqCst);
+                        }
+                    }
+                } else if let Some((x, y)) = default_overlay_pos(app, label, &cfg) {
                     let _ = w.set_position(Position::Physical(PhysicalPosition::new(x, y)));
-                }
-                #[cfg(target_os = "linux")]
-                {
-                    let open = st(app).notch_open.load(Ordering::SeqCst);
-                    let _ = set_notch_region(&w, &cfg, open);
                 }
                 raise(&w);
             }
@@ -476,7 +504,7 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
                 let app = tray.app_handle();
                 match button {
                     MouseButton::Left => toggle_dashboard(app, position),
-                    MouseButton::Right => open_menu(app, Some(position)),
+                    MouseButton::Right => open_menu(app, Some(position), None),
                     _ => {}
                 }
             }
@@ -492,7 +520,7 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
         let menu = Menu::with_items(app, &[&open, &quick, &sep, &quit])?;
         builder = builder.menu(&menu).on_menu_event(|app, e| match e.id().as_ref() {
             "open" => show_dashboard(app, None, None),
-            "menu" => open_menu(app, None),
+            "menu" => open_menu(app, None, None),
             "quit" => app.exit(0),
             _ => {}
         });
@@ -666,6 +694,9 @@ async fn save_settings(app: AppHandle, settings: Settings) -> Result<(), String>
     let mut new = settings;
     // These are owned by Rust-side commands; a window's copy may be stale.
     new.positions = old.positions.clone();
+    if new.surface("notch").anchor != "custom" {
+        new.positions.remove("notch");
+    }
     new.hidden_sessions = old.hidden_sessions.clone();
     new.clear_before = old.clear_before;
     new.first_run_done = true;
@@ -815,26 +846,90 @@ fn set_click_through(window: WebviewWindow, ignore: bool) {
     raise(&window);
 }
 
-/// Updates the notch's input region to match the pill's expanded/collapsed size.
-/// The native window itself never resizes, so the shadow and panel are never
-/// clipped and the transparent area keeps passing clicks through.
+/// The notch page reports its state: whether it's open, and (for Linux) which parts of the
+/// window take mouse input. The native window never resizes, so nothing gets clipped.
 #[tauri::command]
-fn set_notch_open(app: AppHandle, open: bool) {
-    let Some(w) = app.get_webview_window("notch") else { return };
-    st(&app).notch_open.store(open, Ordering::SeqCst);
-    #[cfg(target_os = "linux")]
-    {
-        let cfg = {
-            let state = st(&app);
-            state.settings.lock().unwrap().surface("notch")
-        };
-        let _ = set_notch_region(&w, &cfg, open);
-    }
-    // Do not restack while shrinking: the quick menu is anchored just below the
+fn set_notch_state(app: AppHandle, window: WebviewWindow, open: bool, rects: Vec<[f64; 4]>) {
+    set_input_region(&app, &window, rects);
+    // Don't restack while shrinking: the quick menu is anchored just below the
     // notch and must stay above it (raising the notch here stole its focus).
     if open {
-        raise(&w);
+        raise(&window);
     }
+}
+
+/// Long-press drag: moves the window with the cursor until the page calls `drag_end`
+/// (Windows also watches the mouse button, in case the release never reaches the page).
+#[tauri::command]
+fn drag_start(app: AppHandle, window: WebviewWindow) {
+    if st(&app).dragging.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let (Ok(cur), Ok(start)) = (app.cursor_position(), window.outer_position()) else {
+        st(&app).dragging.store(false, Ordering::SeqCst);
+        return;
+    };
+    let off = (cur.x - start.x as f64, cur.y - start.y as f64);
+    std::thread::spawn(move || {
+        let began = Instant::now();
+        let mut last = (start.x, start.y);
+        while st(&app).dragging.load(Ordering::SeqCst) && began.elapsed() < Duration::from_secs(120) {
+            #[cfg(windows)]
+            if !win32::mouse_down() {
+                break;
+            }
+            if let Ok(c) = app.cursor_position() {
+                let next = ((c.x - off.0).round() as i32, (c.y - off.1).round() as i32);
+                if next != last {
+                    if window.set_position(Position::Physical(PhysicalPosition::new(next.0, next.1))).is_err() {
+                        break;
+                    }
+                    last = next;
+                }
+            }
+            std::thread::sleep(Duration::from_millis(8));
+        }
+        st(&app).dragging.store(false, Ordering::SeqCst);
+        finish_drag(&app, &window);
+    });
+}
+
+#[tauri::command]
+fn drag_end(app: AppHandle) {
+    st(&app).dragging.store(false, Ordering::SeqCst);
+}
+
+/// Keeps a dropped window on its screen, snaps the notch to the top edge when it's dropped
+/// near it, and remembers the spot.
+fn finish_drag(app: &AppHandle, w: &WebviewWindow) {
+    let (Ok(pos), Ok(size)) = (w.outer_position(), w.outer_size()) else { return };
+    let (ww, wh) = (size.width as i32, size.height as i32);
+    let (mut x, mut y) = (pos.x, pos.y);
+    let mon = app
+        .monitor_from_point(x as f64 + ww as f64 / 2.0, y as f64 + 4.0)
+        .ok()
+        .flatten()
+        .or_else(|| w.current_monitor().ok().flatten());
+    if let Some(m) = mon {
+        let (mx, my) = (m.position().x, m.position().y);
+        let (mw, mh) = (m.size().width as i32, m.size().height as i32);
+        x = x.clamp(mx, (mx + mw - ww).max(mx));
+        y = y.clamp(my, (my + mh - wh).max(my));
+        if w.label() == "notch" && y - my < (56.0 * m.scale_factor()) as i32 {
+            y = my;
+        }
+    }
+    if (x, y) != (pos.x, pos.y) {
+        let _ = w.set_position(Position::Physical(PhysicalPosition::new(x, y)));
+    }
+    let label = w.label().to_string();
+    let _ = app.emit_to(label.as_str(), "drag-done", ());
+    update_settings(app, |s| {
+        s.positions.insert(label.clone(), (x, y));
+        if label == "notch" {
+            s.surfaces.entry(label.clone()).or_default().anchor = "custom".into();
+        }
+    });
 }
 
 #[tauri::command]
@@ -854,12 +949,12 @@ fn set_pinned(app: AppHandle, pinned: bool) {
 }
 
 #[tauri::command]
-async fn open_menu_cmd(app: AppHandle, x: Option<f64>, y: Option<f64>) {
+async fn open_menu_cmd(app: AppHandle, x: Option<f64>, y: Option<f64>, from: Option<String>) {
     let anchor = match (x, y) {
         (Some(x), Some(y)) => Some(PhysicalPosition::new(x, y)),
         _ => None,
     };
-    open_menu(&app, anchor);
+    open_menu(&app, anchor, from.as_deref());
 }
 
 #[tauri::command]
@@ -869,11 +964,14 @@ fn resize_self(window: WebviewWindow, width: f64, height: f64) {
 
 #[tauri::command]
 async fn reset_positions(app: AppHandle) {
-    {
-        let state = st(&app);
-        state.settings.lock().unwrap().positions.clear();
-        state.save_pending.store(true, Ordering::SeqCst);
-    }
+    update_settings(&app, |s| {
+        s.positions.clear();
+        if let Some(n) = s.surfaces.get_mut("notch") {
+            if n.anchor == "custom" {
+                n.anchor = "center".into();
+            }
+        }
+    });
     let s = st(&app).settings.lock().unwrap().clone();
     for label in OVERLAYS {
         if let (Some(w), Some((x, y))) = (app.get_webview_window(label), default_overlay_pos(&app, label, &s.surface(label))) {
@@ -901,6 +999,11 @@ fn main() {
         if std::env::var_os("GDK_BACKEND").is_none() && std::env::var_os("DISPLAY").is_some() {
             std::env::set_var("GDK_BACKEND", "x11");
         }
+        // WebKitGTK's DMA-BUF renderer leaves windows blank on many NVIDIA, virtual-GPU and
+        // older-driver setups. Shared-memory rendering is plenty for these small windows.
+        if std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
+            std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+        }
     }
 
     let autostarted = std::env::args().any(|a| a == "--autostart");
@@ -915,7 +1018,9 @@ fn main() {
             get_settings,
             save_settings,
             set_click_through,
-            set_notch_open,
+            set_notch_state,
+            drag_start,
+            drag_end,
             show_dashboard_cmd,
             hide_window,
             set_pinned,
@@ -957,7 +1062,7 @@ fn main() {
                 flyout: AtomicBool::new(false),
                 dirty: AtomicBool::new(false),
                 save_pending: AtomicBool::new(false),
-                notch_open: AtomicBool::new(false),
+                dragging: AtomicBool::new(false),
             });
             if first_run && autostart {
                 sync_autostart(&handle, true);

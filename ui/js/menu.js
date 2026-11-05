@@ -1,4 +1,4 @@
-import { invoke, listen, $, state, boot, money, tok, inTok, saveSettings, moodFeeder, surface } from './common.js';
+import { invoke, listen, $, state, boot, money, tok, inTok, saveSettings, moodFeeder, surface, scopeOptions, scopeName } from './common.js';
 import { Eyes } from './eyes.js';
 
 const eyes = new Eyes($('#eyes'));
@@ -24,11 +24,54 @@ function fitSoon() {
   fitTimer = setTimeout(fit, 80);
 }
 
+// ---- what the surface the menu was opened from shows ----
+const SURF_LABEL = { notch: 'Notch', floating: 'Bubble', widget: 'Widget', taskbar: 'Taskbar strip' };
+const esc = v => String(v).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+let from = null;
+let scopeOpen = false;
+function renderScope() {
+  $('#scopeBox').hidden = !SURF_LABEL[from];
+  if (!SURF_LABEL[from]) return;
+  const cur = surface(from).scope || '';
+  const opts = scopeOptions(state.stats, cur);
+  $('#scopeTitle').textContent = `${SURF_LABEL[from]} shows`;
+  $('#scopeCur').textContent = (opts.find(o => o.value === cur) || {}).label || scopeName(cur);
+  $('#scopeToggle').classList.toggle('on', scopeOpen);
+  $('#scopeList').hidden = !scopeOpen;
+  if (!scopeOpen) return;
+  // A few of each, plus whatever is selected now.
+  const seen = {};
+  let group = null;
+  $('#scopeList').innerHTML = opts
+    .filter(o => !o.group || o.value === cur || (seen[o.group] = (seen[o.group] || 0) + 1) <= 6)
+    .map(o => {
+      const head = o.group !== group && o.group ? `<div class="m-title">${o.group}</div>` : '';
+      group = o.group;
+      const on = o.value === cur;
+      return `${head}<div class="m-item m-opt ${on ? 'on' : ''}" data-scope="${esc(o.value)}"><span class="ic">${on ? '●' : ''}</span><span class="grow">${esc(o.label)}</span><span class="k">${esc(o.sub || '')}</span></div>`;
+    })
+    .join('');
+}
+$('#scopeToggle').addEventListener('click', () => {
+  scopeOpen = !scopeOpen;
+  renderScope();
+  fitSoon();
+});
+$('#scopeList').addEventListener('click', e => {
+  const el = e.target.closest('[data-scope]');
+  if (!el || !SURF_LABEL[from]) return;
+  saveSettings({ surfaces: { ...(state.settings.surfaces || {}), [from]: { ...surface(from), scope: el.dataset.scope } } });
+  scopeOpen = false;
+  renderScope();
+  fitSoon();
+});
+
 function render(st) {
   if (!st || !st.ready) return;
   $('#today').textContent = money(st.today.cost);
   $('#sub').textContent = `today · ${tok(inTok(st.today))} in · ${tok(st.today.output)} out · month ${money(st.month.cost)}`;
   feed(st);
+  if (!scopeOpen) renderScope();
   fitSoon();
 }
 
@@ -36,6 +79,7 @@ function fill(s) {
   document.querySelectorAll('[data-k]').forEach(el => (el.checked = !!s[el.dataset.k]));
   $('#limitK').textContent = s.daily_limit > 0 ? `${money(s.daily_limit)}/day` : 'off';
   $('#ghost').checked = surface('floating').ghost || surface('widget').ghost;
+  renderScope();
 }
 
 $('#ghost').addEventListener('change', e => {
@@ -59,7 +103,10 @@ document.querySelectorAll('[data-act]').forEach(el =>
 
 document.addEventListener('keydown', e => e.key === 'Escape' && invoke('hide_window', { label: 'menu' }));
 document.addEventListener('contextmenu', e => e.preventDefault());
-listen('menu-open', () => {
+listen('menu-open', e => {
+  from = e.payload || null;
+  scopeOpen = false;
+  renderScope();
   eyes.react('happy', 900);
   eyes.hop();
   fitSoon();

@@ -3,6 +3,8 @@ const T = window.__TAURI__;
 export const invoke = (cmd, args) => T.core.invoke(cmd, args);
 export const listen = (ev, fn) => T.event.listen(ev, fn);
 export const win = () => T.window.getCurrentWindow();
+/** The screen this window is on (physical px). */
+export const currentMonitor = () => T.window.currentMonitor();
 export const $ = (sel, root = document) => root.querySelector(sel);
 export const state = { stats: null, settings: null };
 
@@ -171,36 +173,93 @@ export function trackPointer(eyes, el) {
 
 // ---- surface customization ----
 export const SURFACE_DEFAULTS = {
-  scale: 1, opacity: 1, metric: 'today', fields: ['in', 'out', 'month', 'limit', 'live'], style: 'solid',
-  on_top: true, ghost: false, anchor: 'center', expand: true, chart_days: 14,
+  scale: 1, opacity: 1, metric: 'today', scope: '', fields: ['in', 'out', 'month', 'limit', 'live'], style: 'solid',
+  on_top: true, ghost: false, anchor: 'center', expand: true, expand_on: 'hover', auto_hide: 0, reveal: 'edge', chart_days: 14,
 };
 export function surface(label) {
   const s = (state.settings && state.settings.surfaces && state.settings.surfaces[label]) || {};
   return { ...SURFACE_DEFAULTS, ...s };
 }
 
-/** The big number a surface can show. */
+/** The big number a surface can show. `period` is which totals it reads (In/Out follow it too). */
 export const METRICS = {
-  today: { label: 'Today', v: st => st.today.cost, fmt: v => money(v) },
-  month: { label: 'This month', v: st => st.month.cost, fmt: v => money(v) },
-  session: { label: 'Session', v: st => (st.current ? st.current.cost : 0), fmt: v => money(v) },
-  rate: { label: 'Last hour', v: st => st.last_hour_cost, fmt: v => money(v) },
-  tokens_in: { label: 'Tokens in', v: st => inTok(st.today), fmt: v => tok(Math.round(v)) },
-  tokens_out: { label: 'Tokens out', v: st => st.today.output, fmt: v => tok(Math.round(v)) },
-  requests: { label: 'Requests', v: st => st.today.requests, fmt: v => String(Math.round(v)) },
+  today: { label: 'Today', period: 'today', v: p => p.cost, fmt: v => money(v) },
+  month: { label: 'This month', period: 'month', v: p => p.cost, fmt: v => money(v) },
+  total: { label: 'Total', period: 'all', v: p => p.cost, fmt: v => money(v) },
+  session: { label: 'Session', period: 'current', v: p => p.cost, fmt: v => money(v) },
+  rate: { label: 'Last hour', period: 'today', v: (p, st) => st.last_hour_cost, fmt: v => money(v) },
+  tokens_in: { label: 'Tokens in', period: 'today', v: p => inTok(p), fmt: v => tok(Math.round(v)) },
+  tokens_out: { label: 'Tokens out', period: 'today', v: p => p.output || 0, fmt: v => tok(Math.round(v)) },
+  requests: { label: 'Requests', period: 'today', v: p => p.requests || 0, fmt: v => String(Math.round(v)) },
 };
 
-/** Small extra values a surface can list. */
+/** Small extra values a surface can list (`p` is the totals for the main number's period). */
 export const FIELDS = {
-  in: { label: 'In', short: '↑', val: st => tok(inTok(st.today)) },
-  out: { label: 'Out', short: '↓', val: st => tok(st.today.output) },
+  in: { label: 'In', short: '↑', val: (st, p) => tok(inTok(p)) },
+  out: { label: 'Out', short: '↓', val: (st, p) => tok(p.output || 0) },
   today: { label: 'Today', short: 'D', val: st => money(st.today.cost) },
   month: { label: 'Month', short: 'M', val: st => money(st.month.cost) },
+  total: { label: 'Total', short: 'Σ', val: st => money(st.all.cost) },
   session: { label: 'Session', short: 'S', val: st => money(st.current ? st.current.cost : 0) },
-  requests: { label: 'Req', short: '#', val: st => String(st.today.requests) },
+  requests: { label: 'Req', short: '#', val: (st, p) => String(p.requests || 0) },
   rate: { label: '/hour', short: '⏱', val: st => money(st.last_hour_cost) },
 };
 export const FLAG_FIELDS = ['limit', 'chart', 'live'];
+
+const ZERO = { cost: 0, input: 0, cache_write: 0, cache_read: 0, output: 0, requests: 0, web: 0 };
+
+/** A readable name for a scope key ("project:<name>", "session:<id>", "live"). */
+export function scopeName(scope) {
+  if (!scope) return 'All usage';
+  if (scope === 'live') return 'Latest session';
+  if (scope.startsWith('project:')) return scope.slice(8);
+  return 'Session';
+}
+
+/**
+ * What a surface shows: everything, or the project/session it's pinned to.
+ * `st` has the same shape as the stats, with the scoped totals swapped in. A pinned session
+ * counts as one unit, so its numbers are the whole session whatever the period.
+ */
+export function view(stats, cfg) {
+  const metric = METRICS[cfg.metric] ? cfg.metric : 'today';
+  if (!cfg.scope) return { st: stats, sc: null, scope: '', metric, period: METRICS[metric].period };
+  const sc = (stats.scopes && stats.scopes[cfg.scope]) || {
+    kind: cfg.scope.startsWith('project:') ? 'project' : 'session', label: scopeName(cfg.scope),
+    today: ZERO, month: ZERO, all: ZERO, session: null, last_hour_cost: 0,
+  };
+  const st = { ...stats, today: sc.today, month: sc.month, all: sc.all, current: sc.session, last_hour_cost: sc.last_hour_cost };
+  const period = sc.kind === 'session' && metric !== 'rate' ? 'all' : METRICS[metric].period;
+  return { st, sc, scope: cfg.scope, metric, period };
+}
+
+export const periodTotals = (st, period) => (period === 'current' ? st.current : st[period]) || ZERO;
+
+/** Label above the big number, e.g. "Today" or "acme-web · Today". */
+export function viewLabel(v) {
+  const m = METRICS[v.metric];
+  if (!v.sc) return m.label;
+  const name = v.scope === 'live' ? `Latest · ${(v.sc.session && (v.sc.session.project || v.sc.session.tool)) || '—'}` : v.sc.label;
+  const whole = v.sc.kind === 'session' && ['today', 'month', 'total', 'session'].includes(v.metric);
+  return whole ? name : `${name} · ${m.label}`;
+}
+
+const shortTime = ts => new Date(ts * 1000).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+
+/** Choices for what a surface shows, from the latest stats. */
+export function scopeOptions(st, current) {
+  const out = [
+    { value: '', label: 'All usage', group: '' },
+    { value: 'live', label: 'Latest session', sub: st && st.current ? st.current.project || st.current.tool : '', group: '' },
+  ];
+  for (const p of (st && st.projects) || []) out.push({ value: 'project:' + p.name, label: p.name, sub: `${money(p.today_cost)} today`, group: 'Projects' });
+  for (const s of (st && st.sessions) || []) out.push({ value: 'session:' + s.id, label: `${s.project || s.tool} · ${shortTime(s.first)}`, sub: money(s.cost), group: 'Sessions' });
+  if (current && !out.some(o => o.value === current)) {
+    const sc = st && st.scopes && st.scopes[current];
+    out.push({ value: current, label: sc ? sc.label : scopeName(current), group: current.startsWith('project:') ? 'Projects' : 'Sessions' });
+  }
+  return out;
+}
 
 /** Feeds companion moods from stats (limit level, activity, cost jumps). */
 export function moodFeeder(eyes) {

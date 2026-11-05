@@ -1,6 +1,6 @@
 [package]
 name = "tokeye"
-version = "0.1.0"
+version = "0.2.0"
 description = "Tokeye - a cute, customizable token & cost monitor for AI coding tools"
 edition = "2021"
 default-run = "tokeye"

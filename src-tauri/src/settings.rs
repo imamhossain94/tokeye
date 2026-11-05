@@ -79,8 +79,11 @@ pub struct Surface {
     /// Size multiplier (0.6 – 2.0).
     pub scale: f64,
     pub opacity: f64,
-    /// The big number: today | month | session | tokens_in | tokens_out | rate | requests
+    /// The big number: today | month | total | session | tokens_in | tokens_out | rate | requests
     pub metric: String,
+    /// What the numbers count: "" (everything), "live" (the latest session),
+    /// "project:<name>" or "session:<key>".
+    pub scope: String,
     /// Extra items: in, out, month, today, session, requests, limit, chart, live
     pub fields: Vec<String>,
     /// solid | glass | outline | minimal
@@ -91,10 +94,16 @@ pub struct Surface {
     pub on_top: bool,
     /// Bubble/widget: let clicks pass through (unlock from the tray menu).
     pub ghost: bool,
-    /// Notch: left | center | right
+    /// Notch: left | center | right | custom (dragged; the spot is in `Settings::positions`)
     pub anchor: String,
-    /// Notch: expand on hover.
+    /// Notch: expands at all.
     pub expand: bool,
+    /// Notch: hover | click
+    pub expand_on: String,
+    /// Hide after this many idle seconds (0 = never). Touching the top screen edge shows it again.
+    pub auto_hide: u32,
+    /// Notch: what brings it back when hidden: edge (anywhere on the top edge) | notch (only above it)
+    pub reveal: String,
     /// Widget chart range in days.
     pub chart_days: u32,
 }
@@ -105,6 +114,7 @@ impl Default for Surface {
             scale: 1.0,
             opacity: 1.0,
             metric: "today".into(),
+            scope: String::new(),
             fields: vec!["in".into(), "out".into(), "month".into(), "limit".into(), "live".into()],
             style: "solid".into(),
             radius: 8.0,
@@ -112,6 +122,9 @@ impl Default for Surface {
             ghost: false,
             anchor: "center".into(),
             expand: true,
+            expand_on: "hover".into(),
+            auto_hide: 0,
+            reveal: "edge".into(),
             chart_days: 14,
         }
     }

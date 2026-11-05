@@ -2,7 +2,7 @@
 //
 // 1. Start Tokeye with demo data (see scripts/demo_data.py) and remote debugging:
 //      WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9333 tokeye.exe
-// 2. node scripts/capture.mjs <out_dir> [shots|gif-notch|gif-eyes]
+// 2. node scripts/capture.mjs <out_dir> [shots|settings|pinned|gif-notch|gif-eyes]
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -103,6 +103,25 @@ async function surfaceShots(P) {
   await sleep(1200);
   await shot(P.menu, 'menu.png');
   await P.menu.ev(`window.__TAURI__.core.invoke('hide_window', { label: 'menu' })`);
+}
+
+// The bubble pinned to a project, and the menu's "Bubble shows" picker.
+async function pinnedShots(P) {
+  const d = P.dashboard;
+  const setScope = scope => d.ev(`(async () => { const s = await window.__TAURI__.core.invoke('get_settings'); s.surfaces.floating = { ...s.surfaces.floating, scope: ${JSON.stringify(scope)} }; await window.__TAURI__.core.invoke('save_settings', { settings: { ...s, show_floating: true } }); })()`);
+  const project = await d.ev(`window.__TAURI__.core.invoke('get_stats').then(st => st.projects[0].name)`);
+  await setScope('project:' + project);
+  await sleep(1800);
+  await shot(P.floating, 'bubble-pinned.png');
+  await P.floating.ev(`window.__TAURI__.core.invoke('open_menu_cmd', { from: 'floating' })`);
+  await sleep(900);
+  await P.menu.ev(`document.querySelector('#scopeToggle').click()`);
+  await sleep(900);
+  // Just the header and the picker.
+  const clip = await P.menu.ev(`(() => ({ x: 0, y: 0, width: innerWidth, height: Math.ceil(document.querySelector('#scopeBox').getBoundingClientRect().bottom) }))()`);
+  await shot(P.menu, 'menu-shows.png', { clip });
+  await P.menu.ev(`window.__TAURI__.core.invoke('hide_window', { label: 'menu' })`);
+  await setScope('');
 }
 
 async function moodSheet(P) {
@@ -219,7 +238,10 @@ if (MODE === 'settings') {
 } else if (MODE === 'shots') {
   await dashboardShots(P);
   await surfaceShots(P);
+  await pinnedShots(P);
   await moodSheet(P);
+} else if (MODE === 'pinned') {
+  await pinnedShots(P);
 } else if (MODE === 'gif-notch') {
   await gifNotch(P);
 } else if (MODE === 'gif-eyes') {

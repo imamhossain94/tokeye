@@ -1,4 +1,4 @@
-import { invoke, listen, $, state, boot, money, tok, inTok, ago, countUp, setBar, isWorking, bars, saveSettings, trackPointer, moodFeeder, SURFACE_DEFAULTS } from './common.js';
+import { invoke, listen, $, state, boot, money, tok, inTok, ago, countUp, setBar, isWorking, bars, saveSettings, trackPointer, moodFeeder, SURFACE_DEFAULTS, surface, scopeOptions } from './common.js';
 import { Eyes } from './eyes.js';
 import { initBill, refreshBill } from './bill.js';
 
@@ -93,6 +93,7 @@ function render(st) {
   $('#rate').textContent = st.out_last_5m ? `${tok(st.out_last_5m)} tokens out in 5 min` : '';
 
   renderProviderOptions(st);
+  renderScopeSelect(false);
   renderSources(st);
   renderModels(st);
   renderSessions(st);
@@ -121,6 +122,7 @@ let clearArmedUntil = 0;
 function renderSessions(st) {
   const cur = st.current && st.current.id;
   const armed = Date.now() < clearArmedUntil;
+  const bubbleScope = state.settings && state.settings.show_floating ? surface('floating').scope : '';
   const notes = [];
   if (st.clear_before > 0) notes.push(`Counting since ${new Date(st.clear_before * 1000).toLocaleString()}`);
   if (st.hidden_sessions > 0) notes.push(`${st.hidden_sessions} session${st.hidden_sessions === 1 ? '' : 's'} hidden (${money(st.hidden_cost)})`);
@@ -136,6 +138,7 @@ function renderSessions(st) {
           <span class="s-dot"></span>
           <div class="s-main"><div class="s-name">${esc(s.project || 'Untitled')}<span class="tag">${esc(s.tool)}</span>${s.personal ? '<span class="tag">Claude.ai</span>' : ''}</div><div class="s-meta">${ago(s.last)} · ${s.requests} req · ${tok(inTok(s))} in · ${tok(s.output)} out</div></div>
           <b>${money(s.cost)}</b>
+          <button class="ico pin ${bubbleScope === 'session:' + s.id ? 'on' : ''}" data-pin="${esc(s.id)}" title="${bubbleScope === 'session:' + s.id ? 'Stop showing this session on the bubble' : 'Show this session on the floating bubble'}">◉</button>
           ${s.dir ? `<button class="ico" data-open="${esc(s.dir)}" title="Open in ${esc(editorName())}">↗</button>` : ''}
           <button class="x" data-hide="${esc(s.id)}" title="Hide this session from Tokeye">×</button>
         </div>`).join('')
@@ -165,6 +168,13 @@ function openDir(dir) {
 $('#sessList').addEventListener('click', async e => {
   const hide = e.target.closest('[data-hide]');
   if (hide) return invoke('hide_sessions', { ids: [hide.dataset.hide] });
+  const pin = e.target.closest('[data-pin]');
+  if (pin) {
+    const scope = 'session:' + pin.dataset.pin;
+    const on = state.settings.show_floating && surface('floating').scope === scope;
+    await saveSettings({ show_floating: true, surfaces: { ...(state.settings.surfaces || {}), floating: { ...surface('floating'), scope: on ? '' : scope } } });
+    return state.stats && renderSessions(state.stats);
+  }
   const open = e.target.closest('[data-open]') || (!e.target.closest('button, a') && e.target.closest('[data-dir]'));
   if (open) return openDir(open.dataset.open || open.dataset.dir);
   const act = e.target.closest('[data-act]');
@@ -216,7 +226,7 @@ function renderProviderOptions(st) {
 // ---- surfaces editor ----
 const SHOW_KEY = { notch: 'show_notch', floating: 'show_floating', widget: 'show_widget', taskbar: 'show_taskbar' };
 const SURF_NAME = { notch: 'Show the notch island', floating: 'Show the floating bubble', widget: 'Show the desktop widget', taskbar: 'Show the taskbar strip' };
-const FIELD_CHIPS = [['in', 'Tokens in'], ['out', 'Tokens out'], ['today', 'Today'], ['month', 'Month'], ['session', 'Session'], ['requests', 'Requests'], ['rate', 'Last hour'], ['limit', 'Limit bar'], ['chart', 'Chart'], ['live', 'Live dot']];
+const FIELD_CHIPS = [['in', 'Tokens in'], ['out', 'Tokens out'], ['today', 'Today'], ['month', 'Month'], ['total', 'Total'], ['session', 'Session'], ['requests', 'Requests'], ['rate', 'Last hour'], ['limit', 'Limit bar'], ['chart', 'Chart'], ['live', 'Live dot']];
 let surf = 'notch';
 const curSurface = () => ({ ...SURFACE_DEFAULTS, ...((state.settings && state.settings.surfaces && state.settings.surfaces[surf]) || {}) });
 function saveSurface(patch) {
@@ -237,8 +247,11 @@ function fillSurface() {
     else el.value = v ?? '';
   });
   $('#sfRadiusVal').textContent = `${Math.round(c.radius ?? 8)} px`;
+  if (document.activeElement !== $('#sfExpand')) $('#sfExpand').value = !c.expand ? 'off' : c.expand_on === 'click' ? 'click' : 'hover';
+  renderScopeSelect(true);
   $('#sfFields').innerHTML = FIELD_CHIPS.map(([k, l]) => `<button class="fchip ${c.fields.includes(k) ? 'on' : ''}" data-field="${k}">${l}</button>`).join('');
   document.querySelectorAll('.sf-notch').forEach(r => (r.hidden = surf !== 'notch'));
+  document.querySelectorAll('.sf-hides').forEach(r => (r.hidden = r.hidden || !(c.auto_hide > 0)));
   document.querySelectorAll('.sf-float').forEach(r => (r.hidden = !['floating', 'widget'].includes(surf)));
   document.querySelectorAll('.sf-widget').forEach(r => (r.hidden = surf !== 'widget'));
 }
@@ -249,6 +262,31 @@ $('#surfTabs').addEventListener('click', e => {
   fillSurface();
 });
 $('#sfShow').addEventListener('change', e => saveSettings({ [SHOW_KEY[surf]]: e.target.checked }));
+$('#sfExpand').addEventListener('change', e => {
+  const v = e.target.value;
+  saveSurface(v === 'off' ? { expand: false } : { expand: true, expand_on: v });
+});
+
+// "Shows": everything, the latest session, or one project/session (options come from the stats).
+let scopeKey = '';
+function renderScopeSelect(force) {
+  const sel = $('#sfScope');
+  if (!state.settings || document.activeElement === sel) return;
+  const cur = curSurface().scope || '';
+  const opts = scopeOptions(state.stats, cur);
+  const key = surf + '|' + cur + '|' + opts.map(o => o.value + o.label).join(',');
+  if (!force && key === scopeKey) return;
+  scopeKey = key;
+  const groups = [...new Set(opts.map(o => o.group))];
+  sel.innerHTML = groups
+    .map(g => {
+      const items = opts.filter(o => o.group === g).map(o => `<option value="${esc(o.value)}">${esc(o.label)}${o.sub ? ' — ' + esc(o.sub) : ''}</option>`).join('');
+      return g ? `<optgroup label="${esc(g)}">${items}</optgroup>` : items;
+    })
+    .join('');
+  sel.value = cur;
+}
+$('#sfScope').addEventListener('change', e => saveSurface({ scope: e.target.value }));
 $('#sfFields').addEventListener('click', e => {
   const b = e.target.closest('[data-field]');
   if (!b) return;
@@ -261,7 +299,7 @@ document.querySelectorAll('[data-sf]').forEach(el => {
   const instant = el.type === 'checkbox' || el.tagName === 'SELECT';
   el.addEventListener(instant ? 'change' : 'input', () => {
     let v = el.type === 'checkbox' ? el.checked : el.value;
-    if (el.type === 'range' || el.dataset.sf === 'chart_days') v = parseFloat(v);
+    if (el.type === 'range' || ['chart_days', 'auto_hide'].includes(el.dataset.sf)) v = parseFloat(v);
     if (el.dataset.sf === 'radius') $('#sfRadiusVal').textContent = `${v} px`;
     clearTimeout(sfT);
     sfT = setTimeout(() => saveSurface({ [el.dataset.sf]: v }), instant ? 0 : 250);

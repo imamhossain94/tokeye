@@ -34,8 +34,8 @@ Tokeye is a small tray app that tracks the tokens and cost of **Claude Code, Cod
 
 |  |  |
 |---|---|
-| 🏝️ **Notch island** | A black pill at the top of the screen that opens into a stats card when you hover over it. |
-| 🫧 **Floating bubble** | An always-on-top card you can drag anywhere. |
+| 🏝️ **Notch island** | A black pill at the top of the screen that opens into a stats card on hover or click. Long-press to drag it anywhere; it can auto-hide until you touch the top edge. |
+| 🫧 **Floating bubble** | An always-on-top card you can drag anywhere. Pin it to one project or session to watch just its tokens and cost. |
 | 🖼️ **Desktop widget** | A bigger card with a cost chart that sits on your desktop. |
 | 📏 **Taskbar strip** | Today's spend next to your clock (Windows). |
 | 👀 **The companion** | Two expressive eyes that follow your cursor and react to your spending. |
@@ -62,9 +62,19 @@ A small island that hangs from the top of your screen, inspired by Apple's Dynam
 </tr>
 </table>
 
-- **Clicks pass through** when it's closed, so it never gets in your way. Click it when open to open the dashboard.
+- **Clicks pass through** everywhere except the pill itself, so it never gets in your way.
+- **Opens your way:**
+  - **on hover** (the default): click it to open the dashboard;
+  - **on click:** click again to close it, double-click to open the dashboard;
+  - **never.**
+- **Move it:** long-press the notch, then drag it anywhere.
+  - Drop it near the top and it snaps flush to the edge. Anywhere else it gets rounded corners.
+  - Pick a position in Settings to send it home.
+- **Auto-hide:** after 5 s, 10 s, 30 s, 1, 5, 15 or 30 minutes, or an hour without the pointer, it slides up out of sight.
+  - Touch the top edge of the screen to bring it back: anywhere on the edge, or only above the notch.
+  - Limit alerts bring it back too.
 - **Pulses** amber near a limit and red when you're over one.
-- **Configurable:** position (top left, center or right), expand on hover, size, style, radius, and which values it shows.
+- **Configurable:** position (top left, center, right, or wherever you dragged it), size, style, radius, and which values it shows.
 
 ## 🫧 Bubble, 🖼️ widget and 📏 taskbar strip
 
@@ -76,6 +86,20 @@ A small island that hangs from the top of your screen, inspired by Apple's Dynam
 </tr>
 </table>
 
+<table>
+<tr>
+<td align="center" width="55%"><img src="docs/images/bubble-pinned.png" alt="Bubble pinned to one project" /><br /><sub><b>Pinned to a project:</b> its cost, tokens in and tokens out</sub></td>
+<td align="center" width="45%"><img src="docs/images/menu-shows.png" width="280" alt="The Bubble shows picker in the right-click menu" /><br /><sub><b>Right-click → Bubble shows:</b> pick what it counts</sub></td>
+</tr>
+</table>
+
+- **Pin it to a project or session:** right-click the bubble → **Bubble shows**, then pick one of these:
+  - a project;
+  - a session;
+  - **Latest session**, which follows whatever you're working on.
+
+  Its cost and tokens in/out then replace the totals, and a dot by the label shows it's pinned. Every surface can be pinned like this, from its own menu or from **Settings → Surfaces → Shows**. The **◉** button on a session in the Sessions tab pins that session to the bubble.
+- **Auto-hide** works on every surface. It fades out after the time you choose and comes back when you touch the top edge of the screen.
 - **Show any mix:** turn on as many surfaces as you like. Positions are remembered.
 - **Mouse:** right-click any surface for the menu; double-click it to open the dashboard.
 - **Click-through mode** for the bubble and widget lets them float over your work without catching clicks. Turn it off from the tray menu.
@@ -146,6 +170,7 @@ The Bill tab answers *"what did this cost, and where did it go?"*
 </tr>
 </table>
 
+- **◉ Pin** a session to the floating bubble to watch it live.
 - **Open a project:** click a session to open its folder in **your editor**: VS Code, Cursor, Windsurf, VS Code Insiders, Zed, Sublime Text, JetBrains, the file manager, or any custom command with `{path}`.
 - **Clean up:**
   - **×** hides a session.
@@ -172,6 +197,7 @@ The Bill tab answers *"what did this cost, and where did it go?"*
 - **Left-click** the tray icon to open the dashboard flyout.
 - **Right-click** for Tokeye's own styled menu:
   - today's total;
+  - what the surface you right-clicked shows (all usage, the latest session, a project or a session);
   - switches for each surface and the companion;
   - click-through;
   - start with Windows or at login;
@@ -189,9 +215,11 @@ The Bill tab answers *"what did this cost, and where did it go?"*
 - size (60–200%) and opacity;
 - style: solid, glass, outline or minimal;
 - corner radius (0–30 px; default 8 px, like File Explorer);
-- the main number: today, month, session, last hour, tokens in, tokens out or requests;
-- extra values: tokens in/out, today, month, session, requests, last hour, limit bar, chart, live dot;
-- notch position and expand-on-hover;
+- what it shows: all usage, the latest session, one project or one session;
+- the main number: today, month, total, session, last hour, tokens in, tokens out or requests;
+- extra values: tokens in/out, today, month, total, session, requests, last hour, limit bar, chart, live dot;
+- auto-hide (5 s to 1 hour), and where touching the top edge brings the notch back;
+- notch position (or drag it), and expand on hover, on click or never;
 - bubble/widget on-top and click-through;
 - widget chart range.
 
@@ -244,7 +272,11 @@ Download the file for your system from the **[latest release](https://github.com
 After installing:
 - **Startup:** Tokeye starts with your computer, which you can turn off in Settings.
 - **First launch:** it opens the dashboard; after that it lives in the tray.
-- **Linux:** the tray needs an AppIndicator-capable desktop (GNOME with the AppIndicator extension, KDE, and others), and transparent surfaces need a compositor.
+- **Linux:**
+  - **Tray:** needs a desktop that supports AppIndicator (GNOME with the AppIndicator extension, KDE and others). Transparent surfaces need a compositor.
+  - **Wayland:** Tokeye runs through XWayland so its surfaces can position themselves and stay on top. Set `GDK_BACKEND=wayland` to opt out.
+  - **AppImage:** needs FUSE 2: `sudo apt install libfuse2` (`libfuse2t64` on Ubuntu 24.04 and later).
+  - **Blank windows:** Tokeye turns off WebKitGTK's DMA-BUF renderer, which leaves windows blank on many NVIDIA and virtual GPUs. Set `WEBKIT_DISABLE_DMABUF_RENDERER=0` to use it anyway.
 
 ## 🔒 Privacy
 
@@ -290,7 +322,7 @@ scripts/                   icon generator, demo data, screenshot/GIF capture
 Bump `version` in `src-tauri/tauri.conf.json` (and `package.json`), then push a tag:
 
 ```bash
-git tag v0.2.0 && git push origin v0.2.0
+git tag vX.Y.Z && git push origin vX.Y.Z
 ```
 
 GitHub Actions builds Windows (`.exe`, `.msi`), Linux (`.deb`, `.AppImage`, `.rpm`) and macOS (universal `.dmg`) and publishes the release.
@@ -310,6 +342,7 @@ python scripts/make_media.py docs/images
 ## ⚠️ Known limitations
 
 - **macOS notch:** the island sits just below the menu bar, not over it.
+- **Wayland:** Tokeye only sees the cursor over its own windows and X11 apps. The eyes may stop following it, and a hidden notch comes back when you touch the top edge above it.
 - **Windows taskbar strip:** it floats above the taskbar, putting itself back on top a few times a second. It isn't embedded in the taskbar.
 - **Not yet tested with real logs:** the Codex, Gemini CLI, Cline-family and Cursor CSV readers follow each tool's log format. Please open an issue if numbers look off.
 

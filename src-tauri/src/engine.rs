@@ -181,6 +181,15 @@ struct ServerToolUse {
     web_search_requests: Option<u64>,
 }
 
+/// Project name as shown in the UI (sessions without a folder are grouped together).
+fn project_label(p: &str) -> &str {
+    if p.is_empty() {
+        "(no project)"
+    } else {
+        p
+    }
+}
+
 // ---------- snapshot types sent to the UI ----------
 
 #[derive(Serialize, Default, Clone)]
@@ -243,6 +252,36 @@ pub struct SessionStat {
     pub t: Totals,
 }
 
+/// Totals for what one surface is pinned to (a project or a session).
+#[derive(Serialize, Default, Clone)]
+pub struct ScopeStat {
+    /// project | session
+    pub kind: String,
+    pub label: String,
+    pub tool: String,
+    pub dir: String,
+    /// False when the project/session isn't in the loaded history (anymore).
+    pub found: bool,
+    pub last: i64,
+    pub today: Totals,
+    pub month: Totals,
+    pub all: Totals,
+    /// The session itself, or the project's latest session.
+    pub session: Option<SessionStat>,
+    pub last_hour_cost: f64,
+}
+
+/// A project the surfaces can be pinned to.
+#[derive(Serialize, Default, Clone)]
+pub struct ProjectStat {
+    pub name: String,
+    pub dir: String,
+    pub last: i64,
+    pub sessions: usize,
+    pub today_cost: f64,
+    pub cost: f64,
+}
+
 #[derive(Serialize, Default, Clone)]
 pub struct SourceStat {
     pub key: String,
@@ -295,6 +334,10 @@ pub struct Stats {
     pub sources: Vec<SourceStat>,
     pub sessions: Vec<SessionStat>,
     pub current: Option<SessionStat>,
+    /// Most recently used projects, for the surface pickers.
+    pub projects: Vec<ProjectStat>,
+    /// Totals for each scope a surface is pinned to, keyed like `Surface::scope`.
+    pub scopes: HashMap<String, ScopeStat>,
     pub limits: Limits,
     pub history_days: i64,
     pub hidden_sessions: usize,
@@ -1124,12 +1167,7 @@ impl Engine {
     // ----- queries -----
 
     fn project_of(&self, session: usize) -> &str {
-        let p = &self.sessions[session].project;
-        if p.is_empty() {
-            "(no project)"
-        } else {
-            p
-        }
+        project_label(&self.sessions[session].project)
     }
 
     fn session_label(&self, session: usize) -> String {
@@ -1335,6 +1373,95 @@ impl Engine {
             .collect()
     }
 
+    /// Totals for every scope a surface is pinned to ("live", "project:<name>", "session:<key>").
+    /// `sessions` is every visible session, newest first. Uses the same filters as the main totals.
+    fn scopes(&self, s: &Settings, sessions: &[SessionStat], prices: &[PriceRule], tool_on: &[bool], hidden: &HashSet<&str>) -> HashMap<String, ScopeStat> {
+        enum Target {
+            Session(usize),
+            Project(String),
+            Missing,
+        }
+        let mut wanted: Vec<(String, Target, ScopeStat)> = Vec::new();
+        for surface in s.surfaces.values() {
+            let key = surface.scope.trim().to_string();
+            if key.is_empty() || wanted.iter().any(|w| w.0 == key) {
+                continue;
+            }
+            let entry = if let Some(name) = key.strip_prefix("project:") {
+                let latest = sessions.iter().find(|x| project_label(&x.project) == name);
+                let sc = ScopeStat {
+                    kind: "project".into(),
+                    label: name.to_string(),
+                    tool: latest.map(|x| x.tool.clone()).unwrap_or_default(),
+                    dir: latest.map(|x| x.dir.clone()).unwrap_or_default(),
+                    session: latest.cloned(),
+                    ..Default::default()
+                };
+                (Target::Project(name.to_string()), sc)
+            } else {
+                let id = if key == "live" { sessions.first().map(|x| x.id.as_str()) } else { key.strip_prefix("session:") };
+                let found = id.and_then(|id| self.session_idx.get(id).map(|i| (id, *i)));
+                match found {
+                    Some((id, i)) => {
+                        let si = &self.sessions[i];
+                        let sc = ScopeStat {
+                            kind: "session".into(),
+                            label: self.session_label(i),
+                            tool: tool_label(TOOL_KEYS[si.tool]).into(),
+                            dir: si.dir.clone(),
+                            session: sessions.iter().find(|x| x.id == id).cloned(),
+                            ..Default::default()
+                        };
+                        (Target::Session(i), sc)
+                    }
+                    None => (Target::Missing, ScopeStat { kind: "session".into(), label: "No session yet".into(), ..Default::default() }),
+                }
+            };
+            wanted.push((key, entry.0, entry.1));
+        }
+        if wanted.is_empty() {
+            return HashMap::new();
+        }
+        let now = Local::now();
+        let now_ts = now.timestamp();
+        let today = now.date_naive();
+        let month_start = today.with_day(1).unwrap_or(today);
+        for r in &self.recs {
+            if !tool_on[r.tool]
+                || r.ts < s.clear_before
+                || hidden.contains(self.sessions[r.session].key.as_str())
+                || !s.counts(&self.providers.names[r.provider])
+            {
+                continue;
+            }
+            let mut cost = None;
+            for (_, target, sc) in wanted.iter_mut() {
+                let hit = match target {
+                    Target::Session(i) => r.session == *i,
+                    Target::Project(name) => self.project_of(r.session) == name.as_str(),
+                    Target::Missing => false,
+                };
+                if !hit {
+                    continue;
+                }
+                let c = *cost.get_or_insert_with(|| cost_of(r, &prices[r.model], s));
+                sc.found = true;
+                sc.last = sc.last.max(r.ts);
+                sc.all.add(r, c);
+                if r.day == today {
+                    sc.today.add(r, c);
+                }
+                if r.day >= month_start {
+                    sc.month.add(r, c);
+                }
+                if now_ts - r.ts <= 3600 {
+                    sc.last_hour_cost += c;
+                }
+            }
+        }
+        wanted.into_iter().map(|(k, _, sc)| (k, sc)).collect()
+    }
+
     pub fn snapshot(&self, s: &Settings) -> Stats {
         let now = Local::now();
         let now_ts = now.timestamp();
@@ -1372,6 +1499,7 @@ impl Engine {
         let mut by_prov: HashMap<usize, (Totals, Totals)> = HashMap::new();
         let mut by_tool: HashMap<usize, (Totals, Totals)> = HashMap::new();
         let mut by_session: HashMap<usize, Totals> = HashMap::new();
+        let mut project_today: HashMap<&str, f64> = HashMap::new();
         let mut personal: HashMap<usize, bool> = HashMap::new();
         let mut per_tool_requests = vec![0u64; TOOL_KEYS.len()];
         let hidden: HashSet<&str> = s.hidden_sessions.iter().map(|x| x.as_str()).collect();
@@ -1411,6 +1539,7 @@ impl Engine {
             if r.day == today {
                 st.today.add(r, c);
                 st.hours[r.hour.min(23)].add(r, c);
+                *project_today.entry(self.project_of(r.session)).or_default() += c;
             }
             if r.day == yesterday {
                 st.yesterday.add(r, c);
@@ -1505,6 +1634,24 @@ impl Engine {
         st.hidden_sessions = hidden_ids.len();
         sessions.sort_by(|a, b| b.last.cmp(&a.last));
         st.current = sessions.first().cloned();
+
+        let mut projects: HashMap<&str, ProjectStat> = HashMap::new();
+        for ss in &sessions {
+            let name = project_label(&ss.project);
+            let p = projects.entry(name).or_insert_with(|| ProjectStat { name: name.to_string(), ..Default::default() });
+            if p.dir.is_empty() {
+                p.dir = ss.dir.clone();
+            }
+            p.last = p.last.max(ss.last);
+            p.sessions += 1;
+            p.cost += ss.t.cost;
+            p.today_cost = project_today.get(name).copied().unwrap_or(0.0);
+        }
+        let mut projects: Vec<ProjectStat> = projects.into_values().collect();
+        projects.sort_by(|a, b| b.last.cmp(&a.last));
+        projects.truncate(15);
+        st.projects = projects;
+        st.scopes = self.scopes(s, &sessions, &prices, &tool_on, &hidden);
         sessions.truncate(20);
         st.sessions = sessions;
 
